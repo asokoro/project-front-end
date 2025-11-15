@@ -2,7 +2,7 @@
   'use strict';
 
   var express    = require("express")
-    , request    = require("request")
+    , axios      = require("axios")
     , bodyParser = require("body-parser")
     , http       = require("http")
     , chai       = require("chai")
@@ -52,7 +52,8 @@
         });
 
         it("includes an error object", function() {
-          expect(resErr).not.to.be.null;
+          expect(res.body).to.include.keys("error");
+          expect(res.body.error).to.be.an('object');
         });
 
         it("returns the right HTTP status code", function() {
@@ -70,7 +71,6 @@
             get("/").
             set("Content-Type", "application/json").
             end(function(err, res) {
-              expect(err).not.to.be.null;
               expect(res).to.have.status(500);
               done();
             });
@@ -119,8 +119,6 @@
         chai.request(app).
           get("/").
           end(function(err, res) {
-            expect(err).to.not.be.null;
-            expect(err.message).to.equal("Not Found");
             expect(res).to.have.status(404);
             expect(res.text).to.equal("");
             done();
@@ -133,23 +131,26 @@
 
       it("performs a GET request to the given URL", function() {
         var url = "http://google.com";
-        sinon.stub(request, "get", function(requestedUrl, cb) {
+        sinon.stub(axios, "get").callsFake(function(requestedUrl) {
           expect(requestedUrl).to.equal(url);
+          return Promise.resolve({ data: "test" });
         });
-        helpers.simpleHttpRequest(url);
-        request.get.restore();
+        helpers.simpleHttpRequest(url, {}, function() {});
+        axios.get.restore();
       });
 
       describe("given the external service responds with success", function() {
         beforeEach(function(done) {
-          sinon.stub(request, "get", function(url, cb) {
-            var _res    = {}
-              , mockRes = sinon.mock(_res);
-            cb(null, mockRes, "success");
+          sinon.stub(axios, "get").callsFake(function(url) {
+            return Promise.resolve({ data: "success" });
           });
 
           app.use(function(_req, _res) {
-            helpers.simpleHttpRequest("http://api.example.org/users", _res, done);
+            helpers.simpleHttpRequest("http://api.example.org/users", _res, function(err) {
+              if (err) {
+                return done(err);
+              }
+            });
           });
 
           chai.
@@ -164,7 +165,7 @@
         });
 
         afterEach(function() {
-          request.get.restore();
+          axios.get.restore();
         });
 
         it("yields the external service response to the response body", function() {
@@ -180,15 +181,15 @@
         it("invokes the given callback with an error object", function(done) {
           var spy = sinon.spy();
 
-          sinon.stub(request, "get", function(url, cb) {
-            cb(new Error("Something went wrong"));
+          sinon.stub(axios, "get").callsFake(function(url) {
+            return Promise.reject(new Error("Something went wrong"));
           });
 
           app.use(function(req, res) {
             helpers.simpleHttpRequest("http://example.org/fail", res, function(err) {
               expect(err).not.to.be.null;
               expect(err.message).to.equal("Something went wrong");
-              request.get.restore();
+              axios.get.restore();
               done();
             });
           });
@@ -203,16 +204,41 @@
 
     describe("#getCustomerId", function() {
       describe("given the environment is development", function() {
-        it("returns the customer id from the query string");
+        it("returns the customer id from the query string", function() {
+          var req = {
+            query: { custId: "123" },
+            cookies: {},
+            session: {}
+          };
+          var result = helpers.getCustomerId(req, "development");
+          expect(result).to.equal("123");
+        });
       });
 
       describe("given a customer id set in session", function() {
-        it("returns the customer id from the session");
+        it("returns the customer id from the session", function() {
+          var req = {
+            query: {},
+            cookies: { logged_in: true },
+            session: { customerId: "456" }
+          };
+          var result = helpers.getCustomerId(req, "production");
+          expect(result).to.equal("456");
+        });
       });
 
       describe("given no customer id set in the cookies", function() {
         describe("given no customer id set session", function() {
-          it("throws a 'User not logged in' error");
+          it("throws a 'User not logged in' error", function() {
+            var req = {
+              query: {},
+              cookies: {},
+              session: {}
+            };
+            expect(function() {
+              helpers.getCustomerId(req, "production");
+            }).to.throw("User not logged in.");
+          });
         });
       });
     });

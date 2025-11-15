@@ -5,3 +5,5 @@
 /coverage
 
 .idea
+# Ignore nyc coverage output
+.nyc_output/
